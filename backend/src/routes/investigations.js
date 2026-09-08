@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/requireAuth.js';
+import { investigationRateLimiter } from '../middleware/rateLimiter.js';
+import { analyzeMessageEvidence } from '../services/messageAnalysisService.js';
 
 const router = Router();
 
@@ -7,7 +9,11 @@ const VALID_SUBJECT_TYPES = ['url', 'business_advert', 'social_profile', 'phone_
 const VALID_EVIDENCE_TYPES = ['message', 'url', 'screenshot', 'video'];
 const VALID_PLATFORMS = ['instagram', 'facebook', 'tiktok', 'x', 'linkedin', 'whatsapp', 'telegram', 'youtube', 'other'];
 
-router.post('/', requireAuth, (req, res) => {
+function canRunAnalysis(evidence) {
+  return evidence.some((e) => e.type === 'message' || e.type === 'url');
+}
+
+router.post('/', requireAuth, investigationRateLimiter, async (req, res) => {
   const { subject_type, subject_value, subject_platform, evidence, user_context, subject_claims } = req.body;
 
   // --- Validation ---
@@ -31,40 +37,63 @@ router.post('/', requireAuth, (req, res) => {
     }
   }
 
-  // --- MOCK response — real analysis pipeline arrives Milestone 4+ ---
-  const mockReport = {
+  const safeUserContext = user_context || '';
+  const safeSubjectClaims = Array.isArray(subject_claims) ? subject_claims : [];
+
+  let analysis;
+
+  if (canRunAnalysis(evidence)) {
+    // --- REAL AI ANALYSIS (message/URL text evidence only) ---
+    try {
+      analysis = await analyzeMessageEvidence({
+        subjectType: subject_type,
+        subjectValue: subject_value,
+        subjectPlatform: subject_platform || null,
+        evidence,
+        userContext: safeUserContext,
+        subjectClaims: safeSubjectClaims,
+      });
+    } catch (err) {
+      console.error('Message analysis failed:', err.message);
+      return res.status(502).json({
+        error: 'AI analysis is currently unavailable. Please try again shortly.',
+      });
+    }
+  } else {
+    // --- Honest fallback — no message/URL evidence to analyze ---
+    // (Screenshot/video real analysis: Milestones 5-6. Subject-only
+    // verification without text evidence: Milestone 7.)
+    analysis = {
+      verified_facts: [],
+      user_claims: [],
+      possible_connections: [],
+      risk_indicators: [],
+      unknown_flags: [
+        'No message or URL text evidence was provided for TRACY to analyze.',
+      ],
+      confidence_level: {
+        level: 'low',
+        justification: 'No analyzable text evidence was submitted for this investigation.',
+      },
+      recommended_next_steps: [
+        'Add message or URL evidence for TRACY to analyze.',
+      ],
+    };
+  }
+
+  const report = {
     subject_type,
     subject_value,
     subject_platform: subject_type === 'social_profile' ? subject_platform : null,
     evidence,
-    user_context: user_context || '',
-    subject_claims: subject_claims || [],
-    verified_facts: [
-      { fact: 'Placeholder verified fact.', source: 'mock-source', checked_at: new Date().toISOString() },
-    ],
-    user_claims: [
-      { claim: 'Placeholder unverified claim.' },
-    ],
-    possible_connections: [
-      { connection: 'Placeholder inferred connection.', reasoning: 'Mock — real inference comes later.' },
-    ],
-    risk_indicators: [
-      { indicator: 'Placeholder risk pattern.', reasoning: 'Mock — real detection comes in Milestone 9.' },
-    ],
-    unknown_flags: ['Placeholder — not determinable from mock evidence.'],
-    confidence_level: {
-      level: 'low',
-      justification: 'Mock data — no real evidence analyzed yet.',
-    },
-    recommended_next_steps: [
-      'Placeholder recommendation.',
-      'Real recommendations arrive once AI analysis is wired in.',
-    ],
+    user_context: safeUserContext,
+    subject_claims: safeSubjectClaims,
+    ...analysis,
     created_by: req.user.id,
     created_at: new Date().toISOString(),
   };
 
-  res.json(mockReport);
+  res.json(report);
 });
 
 export default router;
