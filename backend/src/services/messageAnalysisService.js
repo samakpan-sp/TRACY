@@ -99,14 +99,22 @@ export async function analyzeMessageEvidence({
   subjectClaims,
 }) {
   const textEvidence = evidence
-    .filter((e) => e.type === 'message' || e.type === 'url' || (e.type === 'screenshot' && e.ocr_text))
-    .map((e) => {
-      if (e.type === 'screenshot') {
-        return `[screenshot OCR text — may contain recognition errors] ${e.ocr_text}`;
-      }
-      return `[${e.type}] ${e.content}`;
-    })
-    .join('\n\n');
+  .filter((e) =>
+    e.type === 'message' ||
+    e.type === 'url' ||
+    (e.type === 'screenshot' && e.ocr_text) ||
+    (e.type === 'video' && e.video_analysis_text)
+  )
+  .map((e) => {
+    if (e.type === 'screenshot') {
+      return `[screenshot OCR text — may contain recognition errors] ${e.ocr_text}`;
+    }
+    if (e.type === 'video') {
+      return `[video content analysis — AI-generated description, not verified for authenticity] ${e.video_analysis_text}`;
+    }
+    return `[${e.type}] ${e.content}`;
+  })
+  .join('\n\n');
 
   const userPrompt = `Subject being investigated: ${subjectType}${subjectPlatform ? ` (platform: ${subjectPlatform})` : ''} — "${subjectValue}"
 

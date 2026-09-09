@@ -54,8 +54,10 @@ function EvidenceInput({ evidence, setEvidence }) {
             file_name: result.file_name,
             storage_path: result.storage_path,
             ocr_text: result.ocr_text || null,
+            video_analysis_text: result.video_analysis_text || null,
           },
         ]);
+
         setDraftFile(null);
       } catch (err) {
         setUploadError(err.message);
@@ -135,7 +137,14 @@ function EvidenceInput({ evidence, setEvidence }) {
               <strong>{item.type}:</strong>{' '}
               {item.content || item.file_name}
               {item.type === 'screenshot' && item.ocr_text && (
-                <span style={{ color: '#555', fontStyle: 'italic' }}> — OCR: "{item.ocr_text.slice(0, 60)}{item.ocr_text.length > 60 ? '...' : ''}"</span>
+                <span style={{ color: '#555', fontStyle: 'italic' }}>
+                  {' '}— OCR: "{item.ocr_text.slice(0, 60)}{item.ocr_text.length > 60 ? '...' : ''}"
+                </span>
+              )}
+              {item.type === 'video' && item.video_analysis_text && (
+                <span style={{ color: '#555', fontStyle: 'italic' }}>
+                  {' '}— Analysis: "{item.video_analysis_text.slice(0, 60)}{item.video_analysis_text.length > 60 ? '...' : ''}"
+                </span>
               )}
               {' '}
               <button

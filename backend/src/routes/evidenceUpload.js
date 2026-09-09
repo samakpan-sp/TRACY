@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../middleware/requireAuth.js';
 import { uploadEvidenceFile } from '../services/storageService.js';
 import { extractTextFromImage } from '../services/ocrService.js';
+import { analyzeVideoEvidence } from '../services/videoAnalysisService.js';
 
 const router = Router();
 
@@ -92,6 +93,8 @@ router.post('/', requireAuth, uploadRateLimiter, upload.single('file'), async (r
     });
 
     let ocrText = null;
+    let videoAnalysisText = null;
+
     if (evidenceType === 'screenshot') {
       try {
         ocrText = await extractTextFromImage({
@@ -104,10 +107,24 @@ router.post('/', requireAuth, uploadRateLimiter, upload.single('file'), async (r
       }
     }
 
+    if (evidenceType === 'video') {
+      try {
+        videoAnalysisText = await analyzeVideoEvidence({
+          fileBuffer: safeBuffer,
+          mimeType: finalMime,
+        });
+      } catch (videoErr) {
+        console.error('Video analysis failed (continuing without it):', videoErr.message);
+        // Upload still succeeds even if analysis fails — same honest
+        // partial-result pattern as OCR.
+      }
+    }
+
     res.json({
       storage_path: storagePath,
       file_name: safeFilename,
       ocr_text: ocrText,
+      video_analysis_text: videoAnalysisText,
     });
   } catch (err) {
     console.error('Evidence upload failed:', err.message);

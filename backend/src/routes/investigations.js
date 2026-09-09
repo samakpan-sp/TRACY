@@ -9,9 +9,14 @@ const VALID_SUBJECT_TYPES = ['url', 'business_advert', 'social_profile', 'phone_
 const VALID_EVIDENCE_TYPES = ['message', 'url', 'screenshot', 'video'];
 const VALID_PLATFORMS = ['instagram', 'facebook', 'tiktok', 'x', 'linkedin', 'whatsapp', 'telegram', 'youtube', 'other'];
 
+
 function canRunAnalysis(evidence) {
   return evidence.some(
-    (e) => e.type === 'message' || e.type === 'url' || (e.type === 'screenshot' && e.ocr_text)
+    (e) =>
+      e.type === 'message' ||
+      e.type === 'url' ||
+      (e.type === 'screenshot' && e.ocr_text) ||
+      (e.type === 'video' && e.video_analysis_text)
   );
 }
 
