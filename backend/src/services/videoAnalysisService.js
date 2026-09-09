@@ -44,7 +44,7 @@ export async function analyzeVideoEvidence({ fileBuffer, mimeType }) {
     uploadedFileName = uploaded.name;
 
     // Google processes the video server-side before it can be analyzed —
-    // poll until it's ready, rather than assuming it's instant.
+    // poll until it's ready.
     let file = uploaded;
     let attempts = 0;
     while (file.state && file.state.toString() === 'PROCESSING' && attempts < 12) {

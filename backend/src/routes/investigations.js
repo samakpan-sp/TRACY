@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../middleware/requireAuth.js';
 import { investigationRateLimiter } from '../middleware/rateLimiter.js';
 import { analyzeMessageEvidence } from '../services/messageAnalysisService.js';
+import { verifySubject } from '../services/subjectVerificationService.js';
 
 const router = Router();
 
@@ -9,15 +10,13 @@ const VALID_SUBJECT_TYPES = ['url', 'business_advert', 'social_profile', 'phone_
 const VALID_EVIDENCE_TYPES = ['message', 'url', 'screenshot', 'video'];
 const VALID_PLATFORMS = ['instagram', 'facebook', 'tiktok', 'x', 'linkedin', 'whatsapp', 'telegram', 'youtube', 'other'];
 
-
-function canRunAnalysis(evidence) {
-  return evidence.some(
-    (e) =>
-      e.type === 'message' ||
-      e.type === 'url' ||
-      (e.type === 'screenshot' && e.ocr_text) ||
-      (e.type === 'video' && e.video_analysis_text)
+function canRunAnalysis(evidence, subjectType) {
+  const hasTextEvidence = evidence.some(
+    (e) => e.type === 'message' || e.type === 'url' || (e.type === 'screenshot' && e.ocr_text) || (e.type === 'video' && e.video_analysis_text)
   );
+  // Subject verification (fetch/search) now covers non-phone subjects even
+  // without evidence — phone numbers still need Milestone 8's licensed lookup.
+  return hasTextEvidence || subjectType !== 'phone_number';
 }
 
 router.post('/', requireAuth, investigationRateLimiter, async (req, res) => {
@@ -48,7 +47,18 @@ router.post('/', requireAuth, investigationRateLimiter, async (req, res) => {
 
   let analysis;
 
-  if (canRunAnalysis(evidence)) {
+  if (canRunAnalysis(evidence, subject_type)) {
+    let externalSubjectInfo = null;
+    try {
+      externalSubjectInfo = await verifySubject({
+        subjectType: subject_type,
+        subjectValue: subject_value,
+        subjectPlatform: subject_platform || null,
+      });
+    } catch (err) {
+      console.error('Subject verification failed (continuing without it):', err.message);
+    }
+
     try {
       analysis = await analyzeMessageEvidence({
         subjectType: subject_type,
@@ -57,6 +67,7 @@ router.post('/', requireAuth, investigationRateLimiter, async (req, res) => {
         evidence,
         userContext: safeUserContext,
         subjectClaims: safeSubjectClaims,
+        externalSubjectInfo,
       });
     } catch (err) {
       console.error('Message analysis failed:', err.message);
@@ -70,16 +81,9 @@ router.post('/', requireAuth, investigationRateLimiter, async (req, res) => {
       user_claims: [],
       possible_connections: [],
       risk_indicators: [],
-      unknown_flags: [
-        'No message, URL, or screenshot text evidence was available for TRACY to analyze.',
-      ],
-      confidence_level: {
-        level: 'low',
-        justification: 'No analyzable text evidence was submitted for this investigation.',
-      },
-      recommended_next_steps: [
-        'Add message, URL, or screenshot evidence for TRACY to analyze.',
-      ],
+      unknown_flags: ['No analyzable evidence was available, and phone number lookup is not yet wired to a real API (Milestone 8).'],
+      confidence_level: { level: 'low', justification: 'No analyzable evidence was submitted for this investigation.' },
+      recommended_next_steps: ['Add message, URL, or screenshot evidence for TRACY to analyze.'],
     };
   }
 

@@ -54,29 +54,31 @@ async function callWithResilience(getModelFn, promptOrFn, { retries = 2, baseDel
   throw lastErr;
 }
 
-// NOTE: Real-time external subject verification (search grounding) is
-// intentionally not implemented here — Gemini's Google Search grounding
-// tool requires a paid tier on the 3.x model family and is account-gated
-// on 2.5. Real external subject verification is deferred to Milestone 7
-// as a deliberate provider decision (likely a dedicated free search API).
+// NOTE: External subject verification is handled upstream by
+// subjectVerificationService.js (direct page fetch with robots.txt
+// compliance, or Serper search fallback for login-walled/ToS-restricted
+// platforms) and passed in as `externalSubjectInfo`. This service never
+// performs its own web lookups — it only reasons over what it's given,
+// and only cites sources that are actually present in that data.
 
-const SYSTEM_PROMPT = `You are TRACY's message-analysis engine, part of a digital trust investigation tool.
+const SYSTEM_PROMPT = `You are TRACY's analysis engine, part of a digital trust investigation tool.
 
-Analyze the message/URL/screenshot evidence and context provided, and produce a cautious, structured evidence breakdown. Follow these rules strictly:
+Analyze the evidence, context, and any external subject information provided, and produce a cautious, structured evidence breakdown. Follow these rules strictly:
 
 1. NEVER invent facts, sources, or evidence not present in the input.
 2. NEVER state or imply anyone "is a scammer" or "is a criminal" — describe patterns, not verdicts.
-3. You have NO external verification capability in this step — do not claim to have checked anything beyond the text you were given. Any real-world fact about the subject that you have not been given as evidence belongs in unknown_flags, not verified_facts.
-4. Text labeled "screenshot OCR text" may contain character-recognition errors — do not treat garbled or ambiguous OCR output as a precise quote; describe it cautiously and note the possibility of misreading where relevant.
-5. Separate findings into exactly these categories:
-   - verified_facts: only objective observations about the text evidence ITSELF (e.g. "the message requests payment via gift card").
+3. You may sometimes be given "External information about the subject" from a real page fetch or search lookup. You may cite this as verified_facts ONLY using the exact source given. If no external information was found or it wasn't applicable, treat the subject itself as unverified and say so in unknown_flags — do not guess.
+4. Text labeled "screenshot OCR text" may contain character-recognition errors — do not treat garbled or ambiguous OCR output as a precise quote; describe it cautiously.
+5. Text labeled "video content analysis" is an AI-generated description of video content, not a verified transcript or authenticity check. Do not treat it as more reliable than it is, and do not comment on whether the video itself is genuine or manipulated.
+6. Separate findings into exactly these categories:
+   - verified_facts: objective observations about the text evidence itself, OR real findings from external information — each with an honest, specific source.
    - user_claims: pass through anything the user told you as context, unverified.
-   - possible_connections: inferred links between details in the message, user_context, and subject_claims — always labeled as inference.
+   - possible_connections: inferred links between details in the message, user_context, subject_claims, and any external information — always labeled as inference.
    - risk_indicators: recognized scam/fraud patterns (urgency, requests for money/gift cards/crypto, impersonation of authority, too-good-to-be-true offers, pressure to act off-platform). Explain WHY each is a risk indicator — never proof of wrongdoing.
-   - unknown_flags: anything relevant that cannot be determined from the evidence alone — including whether the subject itself is legitimate, since no external check was performed.
-6. Cross-reference "subject_claims" against the message content and user_context. Name which specific subject_claim any contradiction relates to.
-7. confidence_level must be "low", "medium", or "high" with a plain-language justification. Note explicitly when confidence is limited by the lack of external verification or by OCR uncertainty.
-8. recommended_next_steps must be practical, safe, user-executable verification steps.
+   - unknown_flags: anything relevant that cannot be determined from the evidence or external information alone.
+7. Cross-reference "subject_claims" against the message content, user_context, AND external information. Name which specific subject_claim any contradiction relates to.
+8. confidence_level must be "low", "medium", or "high" with a plain-language justification. Note explicitly when confidence is limited by missing external verification, OCR uncertainty, or unverified video content.
+9. recommended_next_steps must be practical, safe, user-executable verification steps.
 
 Respond with ONLY a single valid JSON object — no markdown fences, no commentary — matching exactly:
 
@@ -97,24 +99,35 @@ export async function analyzeMessageEvidence({
   evidence,
   userContext,
   subjectClaims,
+  externalSubjectInfo,
 }) {
   const textEvidence = evidence
-  .filter((e) =>
-    e.type === 'message' ||
-    e.type === 'url' ||
-    (e.type === 'screenshot' && e.ocr_text) ||
-    (e.type === 'video' && e.video_analysis_text)
-  )
-  .map((e) => {
-    if (e.type === 'screenshot') {
-      return `[screenshot OCR text — may contain recognition errors] ${e.ocr_text}`;
-    }
-    if (e.type === 'video') {
-      return `[video content analysis — AI-generated description, not verified for authenticity] ${e.video_analysis_text}`;
-    }
-    return `[${e.type}] ${e.content}`;
-  })
-  .join('\n\n');
+    .filter((e) =>
+      e.type === 'message' ||
+      e.type === 'url' ||
+      (e.type === 'screenshot' && e.ocr_text) ||
+      (e.type === 'video' && e.video_analysis_text)
+    )
+    .map((e) => {
+      if (e.type === 'screenshot') {
+        return `[screenshot OCR text — may contain recognition errors] ${e.ocr_text}`;
+      }
+      if (e.type === 'video') {
+        return `[video content analysis — AI-generated description, not verified for authenticity] ${e.video_analysis_text}`;
+      }
+      return `[${e.type}] ${e.content}`;
+    })
+    .join('\n\n');
+
+  const realSources = (externalSubjectInfo?.findings || []).map((f) => f.source);
+
+  const externalInfoText = (externalSubjectInfo?.findings?.length || 0) > 0
+    ? externalSubjectInfo.findings
+        .map((f) => `Source: ${f.source}\nTitle: ${f.title}\nContent: ${f.content}`)
+        .join('\n\n')
+    : 'No external information was found or retrieval was not applicable.';
+
+  const externalNote = externalSubjectInfo?.note ? `\nNote: ${externalSubjectInfo.note}` : '';
 
   const userPrompt = `Subject being investigated: ${subjectType}${subjectPlatform ? ` (platform: ${subjectPlatform})` : ''} — "${subjectValue}"
 
@@ -125,6 +138,9 @@ ${subjectClaims.length > 0 ? subjectClaims.map((c) => `- ${c}`).join('\n') : 'No
 
 Evidence submitted:
 ${textEvidence || 'None provided.'}
+
+External information about the subject (method: ${externalSubjectInfo?.method || 'none'}):${externalNote}
+${externalInfoText}
 
 Analyze per your instructions and return the JSON object only.`;
 
@@ -144,6 +160,19 @@ Analyze per your instructions and return the JSON object only.`;
     parsed = JSON.parse(text);
   } catch (err) {
     throw new Error(`Failed to parse AI response as JSON: ${err.message}`);
+  }
+
+  // Code-level enforcement: any verified_fact must cite either the
+  // submitted evidence, or a source URL that's actually in our real
+  // fetch/search results — never a source the model invented.
+  const allowedTextSources = ['submitted message content', 'submitted evidence', 'submitted url', 'screenshot ocr', 'video content analysis'];
+  if (Array.isArray(parsed.verified_facts)) {
+    parsed.verified_facts = parsed.verified_facts.filter((f) => {
+      const sourceLower = (f.source || '').toLowerCase();
+      const isTextSource = allowedTextSources.some((s) => sourceLower.includes(s));
+      const isRealExternalSource = realSources.some((url) => sourceLower.includes(url.toLowerCase()) || f.source === url);
+      return isTextSource || isRealExternalSource;
+    });
   }
 
   return parsed;
