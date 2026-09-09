@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { supabase } from '../lib/supabaseClient';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const EVIDENCE_TYPES = [
   { value: 'message', label: 'Message' },
@@ -11,24 +14,54 @@ function EvidenceInput({ evidence, setEvidence }) {
   const [draftType, setDraftType] = useState('message');
   const [draftText, setDraftText] = useState('');
   const [draftFile, setDraftFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
 
   const isFileType = draftType === 'screenshot' || draftType === 'video';
 
-  const addEvidence = () => {
+  const addEvidence = async () => {
+    setUploadError(null);
+
     if (isFileType) {
       if (!draftFile) return;
-      setEvidence([
-        ...evidence,
-        {
-          type: draftType,
-          // Real upload lands in Milestone 5/6 — for now we capture metadata only.
-          file_name: draftFile.name,
-          file_size: draftFile.size,
-          file_mime: draftFile.type,
-          uploaded: false,
-        },
-      ]);
-      setDraftFile(null);
+      setUploading(true);
+
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) throw new Error('You must be logged in.');
+
+        const formData = new FormData();
+        formData.append('file', draftFile);
+        formData.append('evidence_type', draftType);
+
+        const res = await fetch(`${API_BASE}/api/evidence-upload`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody.error || `Upload failed (${res.status})`);
+        }
+
+        const result = await res.json();
+
+        setEvidence([
+          ...evidence,
+          {
+            type: draftType,
+            file_name: result.file_name,
+            storage_path: result.storage_path,
+            ocr_text: result.ocr_text || null,
+          },
+        ]);
+        setDraftFile(null);
+      } catch (err) {
+        setUploadError(err.message);
+      } finally {
+        setUploading(false);
+      }
     } else {
       const trimmed = draftText.trim();
       if (trimmed.length === 0) return;
@@ -50,8 +83,11 @@ function EvidenceInput({ evidence, setEvidence }) {
         Add messages, screenshots, video evidence, or a URL — this is what TRACY analyzes to support its report.
       </p>
 
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <select value={draftType} onChange={(e) => { setDraftType(e.target.value); setDraftText(''); setDraftFile(null); }}>
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.25rem' }}>
+        <select
+          value={draftType}
+          onChange={(e) => { setDraftType(e.target.value); setDraftText(''); setDraftFile(null); setUploadError(null); }}
+        >
           {EVIDENCE_TYPES.map((t) => (
             <option key={t.value} value={t.value}>{t.label}</option>
           ))}
@@ -74,8 +110,23 @@ function EvidenceInput({ evidence, setEvidence }) {
           />
         )}
 
-        <button type="button" onClick={addEvidence}>Add</button>
+        <button type="button" onClick={addEvidence} disabled={uploading}>
+          {uploading ? 'Uploading...' : 'Add'}
+        </button>
       </div>
+
+      {draftType === 'video' && (
+        <p style={{ fontSize: '0.8rem', color: '#777', margin: '0 0 0.5rem' }}>
+          Max 40MB (~1 minute). Trim longer clips to the relevant portion.
+        </p>
+      )}
+      {draftType === 'screenshot' && (
+        <p style={{ fontSize: '0.8rem', color: '#777', margin: '0 0 0.5rem' }}>
+          Max 10MB.
+        </p>
+      )}
+
+      {uploadError && <p style={{ color: 'red', fontSize: '0.85rem' }}>{uploadError}</p>}
 
       {evidence.length > 0 && (
         <ul>
@@ -83,6 +134,9 @@ function EvidenceInput({ evidence, setEvidence }) {
             <li key={i}>
               <strong>{item.type}:</strong>{' '}
               {item.content || item.file_name}
+              {item.type === 'screenshot' && item.ocr_text && (
+                <span style={{ color: '#555', fontStyle: 'italic' }}> — OCR: "{item.ocr_text.slice(0, 60)}{item.ocr_text.length > 60 ? '...' : ''}"</span>
+              )}
               {' '}
               <button
                 type="button"

@@ -10,13 +10,14 @@ const VALID_EVIDENCE_TYPES = ['message', 'url', 'screenshot', 'video'];
 const VALID_PLATFORMS = ['instagram', 'facebook', 'tiktok', 'x', 'linkedin', 'whatsapp', 'telegram', 'youtube', 'other'];
 
 function canRunAnalysis(evidence) {
-  return evidence.some((e) => e.type === 'message' || e.type === 'url');
+  return evidence.some(
+    (e) => e.type === 'message' || e.type === 'url' || (e.type === 'screenshot' && e.ocr_text)
+  );
 }
 
 router.post('/', requireAuth, investigationRateLimiter, async (req, res) => {
   const { subject_type, subject_value, subject_platform, evidence, user_context, subject_claims } = req.body;
 
-  // --- Validation ---
   if (!VALID_SUBJECT_TYPES.includes(subject_type)) {
     return res.status(400).json({ error: `subject_type must be one of: ${VALID_SUBJECT_TYPES.join(', ')}` });
   }
@@ -43,7 +44,6 @@ router.post('/', requireAuth, investigationRateLimiter, async (req, res) => {
   let analysis;
 
   if (canRunAnalysis(evidence)) {
-    // --- REAL AI ANALYSIS (message/URL text evidence only) ---
     try {
       analysis = await analyzeMessageEvidence({
         subjectType: subject_type,
@@ -60,23 +60,20 @@ router.post('/', requireAuth, investigationRateLimiter, async (req, res) => {
       });
     }
   } else {
-    // --- Honest fallback — no message/URL evidence to analyze ---
-    // (Screenshot/video real analysis: Milestones 5-6. Subject-only
-    // verification without text evidence: Milestone 7.)
     analysis = {
       verified_facts: [],
       user_claims: [],
       possible_connections: [],
       risk_indicators: [],
       unknown_flags: [
-        'No message or URL text evidence was provided for TRACY to analyze.',
+        'No message, URL, or screenshot text evidence was available for TRACY to analyze.',
       ],
       confidence_level: {
         level: 'low',
         justification: 'No analyzable text evidence was submitted for this investigation.',
       },
       recommended_next_steps: [
-        'Add message or URL evidence for TRACY to analyze.',
+        'Add message, URL, or screenshot evidence for TRACY to analyze.',
       ],
     };
   }

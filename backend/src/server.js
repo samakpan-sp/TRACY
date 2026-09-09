@@ -4,9 +4,7 @@ import dotenv from 'dotenv';
 import healthRouter from './routes/health.js';
 import protectedRouter from './routes/protected.js';
 import investigationsRouter from './routes/investigations.js';
-
-
-
+import evidenceUploadRouter from './routes/evidenceUpload.js';
 
 dotenv.config();
 
@@ -20,7 +18,7 @@ app.use(express.json());
 app.use('/api/health', healthRouter);
 app.use('/api/protected-ping', protectedRouter);
 app.use('/api/investigations', investigationsRouter);
-
+app.use('/api/evidence-upload', evidenceUploadRouter);
 
 app.listen(PORT, () => {
   console.log(`TRACY backend running on http://localhost:${PORT}`);

@@ -54,29 +54,29 @@ async function callWithResilience(getModelFn, promptOrFn, { retries = 2, baseDel
   throw lastErr;
 }
 
-// NOTE: Search-grounded subject lookup removed for now. Gemini's Google
-// Search grounding tool requires a paid tier on the 3.x model family and
-// is account-gated on 2.5 — not viable pre-monetization. Real external
-// subject verification (via public page fetch and/or a dedicated free
-// search API) is Milestone 7's job, done deliberately with its own
-// budget/approach decision rather than bolted on here.
+// NOTE: Real-time external subject verification (search grounding) is
+// intentionally not implemented here — Gemini's Google Search grounding
+// tool requires a paid tier on the 3.x model family and is account-gated
+// on 2.5. Real external subject verification is deferred to Milestone 7
+// as a deliberate provider decision (likely a dedicated free search API).
 
 const SYSTEM_PROMPT = `You are TRACY's message-analysis engine, part of a digital trust investigation tool.
 
-Analyze the message/URL evidence and context provided, and produce a cautious, structured evidence breakdown. Follow these rules strictly:
+Analyze the message/URL/screenshot evidence and context provided, and produce a cautious, structured evidence breakdown. Follow these rules strictly:
 
 1. NEVER invent facts, sources, or evidence not present in the input.
 2. NEVER state or imply anyone "is a scammer" or "is a criminal" — describe patterns, not verdicts.
 3. You have NO external verification capability in this step — do not claim to have checked anything beyond the text you were given. Any real-world fact about the subject that you have not been given as evidence belongs in unknown_flags, not verified_facts.
-4. Separate findings into exactly these categories:
+4. Text labeled "screenshot OCR text" may contain character-recognition errors — do not treat garbled or ambiguous OCR output as a precise quote; describe it cautiously and note the possibility of misreading where relevant.
+5. Separate findings into exactly these categories:
    - verified_facts: only objective observations about the text evidence ITSELF (e.g. "the message requests payment via gift card").
    - user_claims: pass through anything the user told you as context, unverified.
    - possible_connections: inferred links between details in the message, user_context, and subject_claims — always labeled as inference.
    - risk_indicators: recognized scam/fraud patterns (urgency, requests for money/gift cards/crypto, impersonation of authority, too-good-to-be-true offers, pressure to act off-platform). Explain WHY each is a risk indicator — never proof of wrongdoing.
    - unknown_flags: anything relevant that cannot be determined from the evidence alone — including whether the subject itself is legitimate, since no external check was performed.
-5. Cross-reference "subject_claims" against the message content and user_context. Name which specific subject_claim any contradiction relates to.
-6. confidence_level must be "low", "medium", or "high" with a plain-language justification. Note explicitly when confidence is limited by the lack of external verification.
-7. recommended_next_steps must be practical, safe, user-executable verification steps — including independently checking the subject through official channels, since TRACY did not do so itself in this step.
+6. Cross-reference "subject_claims" against the message content and user_context. Name which specific subject_claim any contradiction relates to.
+7. confidence_level must be "low", "medium", or "high" with a plain-language justification. Note explicitly when confidence is limited by the lack of external verification or by OCR uncertainty.
+8. recommended_next_steps must be practical, safe, user-executable verification steps.
 
 Respond with ONLY a single valid JSON object — no markdown fences, no commentary — matching exactly:
 
@@ -99,8 +99,13 @@ export async function analyzeMessageEvidence({
   subjectClaims,
 }) {
   const textEvidence = evidence
-    .filter((e) => e.type === 'message' || e.type === 'url')
-    .map((e) => `[${e.type}] ${e.content}`)
+    .filter((e) => e.type === 'message' || e.type === 'url' || (e.type === 'screenshot' && e.ocr_text))
+    .map((e) => {
+      if (e.type === 'screenshot') {
+        return `[screenshot OCR text — may contain recognition errors] ${e.ocr_text}`;
+      }
+      return `[${e.type}] ${e.content}`;
+    })
     .join('\n\n');
 
   const userPrompt = `Subject being investigated: ${subjectType}${subjectPlatform ? ` (platform: ${subjectPlatform})` : ''} — "${subjectValue}"
@@ -110,7 +115,7 @@ User's background context: ${userContext || 'None provided.'}
 Claims the subject made to the user:
 ${subjectClaims.length > 0 ? subjectClaims.map((c) => `- ${c}`).join('\n') : 'None provided.'}
 
-Message/URL evidence submitted:
+Evidence submitted:
 ${textEvidence || 'None provided.'}
 
 Analyze per your instructions and return the JSON object only.`;
