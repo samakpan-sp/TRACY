@@ -54,12 +54,6 @@ async function callWithResilience(getModelFn, promptOrFn, { retries = 2, baseDel
   throw lastErr;
 }
 
-// NOTE: External subject verification (page fetch, search fallback, and
-// licensed phone lookup) is handled upstream by subjectVerificationService.js
-// and passed in as `externalSubjectInfo`. This service never performs its
-// own web lookups — it only reasons over what it's given, and only cites
-// sources that are actually present in that data.
-
 const SYSTEM_PROMPT = `You are TRACY's analysis engine, part of a digital trust investigation tool.
 
 Analyze the evidence, context, and any external subject information provided, and produce a cautious, structured evidence breakdown. Follow these rules strictly:
@@ -68,15 +62,18 @@ Analyze the evidence, context, and any external subject information provided, an
 2. NEVER state or imply anyone "is a scammer" or "is a criminal" — describe patterns, not verdicts.
 3. You may sometimes be given "External information about the subject" from a real page fetch, search lookup, or licensed phone verification. You may cite this as verified_facts ONLY using the exact source given. If no external information was found or it wasn't applicable, treat the subject itself as unverified and say so in unknown_flags — do not guess.
 3a. When the subject is a phone number, "External information" may include licensed carrier/line-type data (source: "Veriphone API lookup"). Treat this as a real verified_fact. Actively cross-reference it against subject_claims — e.g. a claim of calling from an official organization is worth flagging as a possible_connection or risk_indicator if the licensed data shows a prepaid, VoIP, or foreign-registered line inconsistent with that claim. Also check whether search findings show this exact number associated with similar offers/complaints elsewhere.
+3b. External information may include TRACY's own internal investigation history (source: "TRACY internal investigation history"), showing how many times this subject has been investigated before and common risk themes noted. Treat repeated appearance as worth mentioning in possible_connections or risk_indicators, but do not treat prior investigation count alone as proof of wrongdoing — a legitimate business or number can reasonably be investigated multiple times by different cautious users.
 4. Text labeled "screenshot OCR text" may contain character-recognition errors — do not treat garbled or ambiguous OCR output as a precise quote; describe it cautiously.
 5. Text labeled "video content analysis" is an AI-generated description of video content, not a verified transcript or authenticity check. Do not treat it as more reliable than it is, and do not comment on whether the video itself is genuine or manipulated.
 6. Separate findings into exactly these categories:
    - verified_facts: objective observations about the text evidence itself, OR real findings from external information — each with an honest, specific source.
    - user_claims: pass through anything the user told you as context, unverified.
+   - contradictions: see rule 7a below — a dedicated, separate category.
    - possible_connections: inferred links between details in the message, user_context, subject_claims, and any external information — always labeled as inference.
    - risk_indicators: recognized scam/fraud patterns (urgency, requests for money/gift cards/crypto, impersonation of authority, too-good-to-be-true offers, pressure to act off-platform). Explain WHY each is a risk indicator — never proof of wrongdoing.
    - unknown_flags: anything relevant that cannot be determined from the evidence or external information alone.
 7. Cross-reference "subject_claims" against the message content, user_context, AND external information. Name which specific subject_claim any contradiction relates to.
+7a. "contradictions" is a DEDICATED category, separate from possible_connections. Populate it ONLY when a specific subject_claim directly conflicts with specific evidence, external information, or another subject_claim. The "subject_claim" field must be copied verbatim (or near-verbatim) from the actual claims list provided — never paraphrase it into something that sounds more damning than what was actually claimed. The "conflicts_with" field must name the specific evidence item or external source it conflicts with. If no genuine contradiction exists, return an empty array — do not manufacture one to fill the category.
 8. confidence_level must be "low", "medium", or "high" with a plain-language justification. Note explicitly when confidence is limited by missing external verification, OCR uncertainty, or unverified video content.
 9. recommended_next_steps must be practical, safe, user-executable verification steps.
 
@@ -85,6 +82,7 @@ Respond with ONLY a single valid JSON object — no markdown fences, no commenta
 {
   "verified_facts": [{ "fact": string, "source": string }],
   "user_claims": [{ "claim": string }],
+  "contradictions": [{ "subject_claim": string, "conflicts_with": string, "explanation": string }],
   "possible_connections": [{ "connection": string, "reasoning": string }],
   "risk_indicators": [{ "indicator": string, "reasoning": string }],
   "unknown_flags": [string],
@@ -96,6 +94,7 @@ function normalizeAnalysis(parsed) {
   return {
     verified_facts: Array.isArray(parsed.verified_facts) ? parsed.verified_facts : [],
     user_claims: Array.isArray(parsed.user_claims) ? parsed.user_claims : [],
+    contradictions: Array.isArray(parsed.contradictions) ? parsed.contradictions : [],
     possible_connections: Array.isArray(parsed.possible_connections) ? parsed.possible_connections : [],
     risk_indicators: Array.isArray(parsed.risk_indicators) ? parsed.risk_indicators : [],
     unknown_flags: Array.isArray(parsed.unknown_flags) ? parsed.unknown_flags : [],
@@ -107,6 +106,33 @@ function normalizeAnalysis(parsed) {
       : { level: 'low', justification: 'Confidence data was missing from the analysis.' },
     recommended_next_steps: Array.isArray(parsed.recommended_next_steps) ? parsed.recommended_next_steps : [],
   };
+}
+
+function deriveConfidenceCeiling({ realSources, evidence, contradictions }) {
+  const hasTextEvidence = evidence.some(
+    (e) => e.type === 'message' || e.type === 'url' || (e.type === 'screenshot' && e.ocr_text) || (e.type === 'video' && e.video_analysis_text)
+  );
+  const hasRealExternalSource = realSources.length > 0;
+  const hasContradiction = contradictions.length > 0;
+
+  if (!hasTextEvidence && !hasRealExternalSource) {
+    return 'low';
+  }
+
+  if (hasContradiction && hasRealExternalSource) {
+    return 'high';
+  }
+
+  if (hasRealExternalSource || hasTextEvidence) {
+    return 'medium';
+  }
+
+  return 'low';
+}
+
+function capConfidence(aiLevel, ceiling) {
+  const order = { low: 0, medium: 1, high: 2 };
+  return order[aiLevel] <= order[ceiling] ? aiLevel : ceiling;
 }
 
 export async function analyzeMessageEvidence({
@@ -179,12 +205,17 @@ Analyze per your instructions and return the JSON object only.`;
     throw new Error(`Failed to parse AI response as JSON: ${err.message}`);
   }
 
-  // Code-level enforcement: any verified_fact must cite either the
-  // submitted evidence, or a source that's actually in our real
-  // fetch/search/lookup results — never a source the model invented.
-   const normalized = normalizeAnalysis(parsed);
+  const normalized = normalizeAnalysis(parsed);
 
-  const allowedTextSources = ['submitted message content', 'submitted evidence', 'submitted url', 'screenshot ocr', 'video content analysis', 'veriphone api lookup'];
+  const allowedTextSources = [
+    'submitted message content',
+    'submitted evidence',
+    'submitted url',
+    'screenshot ocr',
+    'video content analysis',
+    'veriphone api lookup',
+    'tracy internal investigation history',
+  ];
   normalized.verified_facts = normalized.verified_facts.filter((f) => {
     const sourceLower = (f?.source || '').toLowerCase();
     const isTextSource = allowedTextSources.some((s) => sourceLower.includes(s));
@@ -192,7 +223,34 @@ Analyze per your instructions and return the JSON object only.`;
     return isTextSource || isRealExternalSource;
   });
 
-  return normalized;
+  function isRealSubjectClaim(claimText) {
+    const normalizedClaim = (claimText || '').toLowerCase().trim();
+    return subjectClaims.some((real) => {
+      const normalizedReal = real.toLowerCase().trim();
+      return normalizedReal.includes(normalizedClaim) || normalizedClaim.includes(normalizedReal);
+    });
+  }
 
-  return parsed;
+  normalized.contradictions = normalized.contradictions.filter((c) => {
+    if (!c || typeof c.subject_claim !== 'string') return false;
+    return isRealSubjectClaim(c.subject_claim);
+  });
+
+  const ceiling = deriveConfidenceCeiling({
+    realSources,
+    evidence,
+    contradictions: normalized.contradictions,
+  });
+
+  const aiLevel = normalized.confidence_level.level;
+  const finalLevel = capConfidence(aiLevel, ceiling);
+
+  if (finalLevel !== aiLevel) {
+    normalized.confidence_level = {
+      level: finalLevel,
+      justification: `${normalized.confidence_level.justification} (Adjusted from "${aiLevel}" to "${finalLevel}" — the amount of real evidence and external verification available does not support higher confidence.)`,
+    };
+  }
+
+  return normalized;
 }
