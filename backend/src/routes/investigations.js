@@ -10,13 +10,10 @@ const VALID_SUBJECT_TYPES = ['url', 'business_advert', 'social_profile', 'phone_
 const VALID_EVIDENCE_TYPES = ['message', 'url', 'screenshot', 'video'];
 const VALID_PLATFORMS = ['instagram', 'facebook', 'tiktok', 'x', 'linkedin', 'whatsapp', 'telegram', 'youtube', 'other'];
 
-function canRunAnalysis(evidence, subjectType) {
-  const hasTextEvidence = evidence.some(
-    (e) => e.type === 'message' || e.type === 'url' || (e.type === 'screenshot' && e.ocr_text) || (e.type === 'video' && e.video_analysis_text)
-  );
-  // Subject verification (fetch/search) now covers non-phone subjects even
-  // without evidence — phone numbers still need Milestone 8's licensed lookup.
-  return hasTextEvidence || subjectType !== 'phone_number';
+function canRunAnalysis() {
+  // Every subject type now has a real analysis path: text evidence,
+  // direct fetch, search fallback, or licensed phone lookup.
+  return true;
 }
 
 router.post('/', requireAuth, investigationRateLimiter, async (req, res) => {
@@ -47,7 +44,7 @@ router.post('/', requireAuth, investigationRateLimiter, async (req, res) => {
 
   let analysis;
 
-  if (canRunAnalysis(evidence, subject_type)) {
+  if (canRunAnalysis()) {
     let externalSubjectInfo = null;
     try {
       externalSubjectInfo = await verifySubject({
@@ -75,16 +72,6 @@ router.post('/', requireAuth, investigationRateLimiter, async (req, res) => {
         error: 'AI analysis is currently unavailable. Please try again shortly.',
       });
     }
-  } else {
-    analysis = {
-      verified_facts: [],
-      user_claims: [],
-      possible_connections: [],
-      risk_indicators: [],
-      unknown_flags: ['No analyzable evidence was available, and phone number lookup is not yet wired to a real API (Milestone 8).'],
-      confidence_level: { level: 'low', justification: 'No analyzable evidence was submitted for this investigation.' },
-      recommended_next_steps: ['Add message, URL, or screenshot evidence for TRACY to analyze.'],
-    };
   }
 
   const report = {

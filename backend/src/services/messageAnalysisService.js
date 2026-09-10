@@ -54,12 +54,11 @@ async function callWithResilience(getModelFn, promptOrFn, { retries = 2, baseDel
   throw lastErr;
 }
 
-// NOTE: External subject verification is handled upstream by
-// subjectVerificationService.js (direct page fetch with robots.txt
-// compliance, or Serper search fallback for login-walled/ToS-restricted
-// platforms) and passed in as `externalSubjectInfo`. This service never
-// performs its own web lookups — it only reasons over what it's given,
-// and only cites sources that are actually present in that data.
+// NOTE: External subject verification (page fetch, search fallback, and
+// licensed phone lookup) is handled upstream by subjectVerificationService.js
+// and passed in as `externalSubjectInfo`. This service never performs its
+// own web lookups — it only reasons over what it's given, and only cites
+// sources that are actually present in that data.
 
 const SYSTEM_PROMPT = `You are TRACY's analysis engine, part of a digital trust investigation tool.
 
@@ -67,7 +66,8 @@ Analyze the evidence, context, and any external subject information provided, an
 
 1. NEVER invent facts, sources, or evidence not present in the input.
 2. NEVER state or imply anyone "is a scammer" or "is a criminal" — describe patterns, not verdicts.
-3. You may sometimes be given "External information about the subject" from a real page fetch or search lookup. You may cite this as verified_facts ONLY using the exact source given. If no external information was found or it wasn't applicable, treat the subject itself as unverified and say so in unknown_flags — do not guess.
+3. You may sometimes be given "External information about the subject" from a real page fetch, search lookup, or licensed phone verification. You may cite this as verified_facts ONLY using the exact source given. If no external information was found or it wasn't applicable, treat the subject itself as unverified and say so in unknown_flags — do not guess.
+3a. When the subject is a phone number, "External information" may include licensed carrier/line-type data (source: "Veriphone API lookup"). Treat this as a real verified_fact. Actively cross-reference it against subject_claims — e.g. a claim of calling from an official organization is worth flagging as a possible_connection or risk_indicator if the licensed data shows a prepaid, VoIP, or foreign-registered line inconsistent with that claim. Also check whether search findings show this exact number associated with similar offers/complaints elsewhere.
 4. Text labeled "screenshot OCR text" may contain character-recognition errors — do not treat garbled or ambiguous OCR output as a precise quote; describe it cautiously.
 5. Text labeled "video content analysis" is an AI-generated description of video content, not a verified transcript or authenticity check. Do not treat it as more reliable than it is, and do not comment on whether the video itself is genuine or manipulated.
 6. Separate findings into exactly these categories:
@@ -91,6 +91,23 @@ Respond with ONLY a single valid JSON object — no markdown fences, no commenta
   "confidence_level": { "level": "low" | "medium" | "high", "justification": string },
   "recommended_next_steps": [string]
 }`;
+
+function normalizeAnalysis(parsed) {
+  return {
+    verified_facts: Array.isArray(parsed.verified_facts) ? parsed.verified_facts : [],
+    user_claims: Array.isArray(parsed.user_claims) ? parsed.user_claims : [],
+    possible_connections: Array.isArray(parsed.possible_connections) ? parsed.possible_connections : [],
+    risk_indicators: Array.isArray(parsed.risk_indicators) ? parsed.risk_indicators : [],
+    unknown_flags: Array.isArray(parsed.unknown_flags) ? parsed.unknown_flags : [],
+    confidence_level: parsed.confidence_level && typeof parsed.confidence_level === 'object'
+      ? {
+          level: ['low', 'medium', 'high'].includes(parsed.confidence_level.level) ? parsed.confidence_level.level : 'low',
+          justification: parsed.confidence_level.justification || 'No justification provided by the model.',
+        }
+      : { level: 'low', justification: 'Confidence data was missing from the analysis.' },
+    recommended_next_steps: Array.isArray(parsed.recommended_next_steps) ? parsed.recommended_next_steps : [],
+  };
+}
 
 export async function analyzeMessageEvidence({
   subjectType,
@@ -163,17 +180,19 @@ Analyze per your instructions and return the JSON object only.`;
   }
 
   // Code-level enforcement: any verified_fact must cite either the
-  // submitted evidence, or a source URL that's actually in our real
-  // fetch/search results — never a source the model invented.
-  const allowedTextSources = ['submitted message content', 'submitted evidence', 'submitted url', 'screenshot ocr', 'video content analysis'];
-  if (Array.isArray(parsed.verified_facts)) {
-    parsed.verified_facts = parsed.verified_facts.filter((f) => {
-      const sourceLower = (f.source || '').toLowerCase();
-      const isTextSource = allowedTextSources.some((s) => sourceLower.includes(s));
-      const isRealExternalSource = realSources.some((url) => sourceLower.includes(url.toLowerCase()) || f.source === url);
-      return isTextSource || isRealExternalSource;
-    });
-  }
+  // submitted evidence, or a source that's actually in our real
+  // fetch/search/lookup results — never a source the model invented.
+   const normalized = normalizeAnalysis(parsed);
+
+  const allowedTextSources = ['submitted message content', 'submitted evidence', 'submitted url', 'screenshot ocr', 'video content analysis', 'veriphone api lookup'];
+  normalized.verified_facts = normalized.verified_facts.filter((f) => {
+    const sourceLower = (f?.source || '').toLowerCase();
+    const isTextSource = allowedTextSources.some((s) => sourceLower.includes(s));
+    const isRealExternalSource = realSources.some((url) => sourceLower.includes(url.toLowerCase()) || f?.source === url);
+    return isTextSource || isRealExternalSource;
+  });
+
+  return normalized;
 
   return parsed;
 }

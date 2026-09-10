@@ -1,5 +1,6 @@
 import { fetchPublicPage } from './pageFetchService.js';
 import { searchWeb } from './searchService.js';
+import { lookupPhoneNumber } from './phoneLookupService.js';
 
 // Platforms whose ToS prohibit automated access, or that are effectively
 // always login-walled for meaningful profile content. Never fetched directly.
@@ -19,10 +20,31 @@ function looksLikeUrl(value) {
 }
 
 export async function verifySubject({ subjectType, subjectValue, subjectPlatform }) {
-  // Phone numbers get a dedicated licensed-lookup pipeline in Milestone 8 —
-  // not handled by search/fetch here.
+  // --- Phone number: licensed carrier lookup + search footprint check ---
   if (subjectType === 'phone_number') {
-    return { method: 'skipped', reason: 'Phone number verification arrives in Milestone 8.', findings: [] };
+    const findings = [];
+
+    try {
+      const lookup = await lookupPhoneNumber(subjectValue);
+      findings.push({
+        source: 'Veriphone API lookup',
+        title: 'Carrier/line verification',
+        content: `Valid number: ${lookup.valid}. Carrier: ${lookup.carrier}. Line type: ${lookup.lineType}. Country: ${lookup.countryName} (${lookup.countryCode}). Region: ${lookup.region}.`,
+      });
+    } catch (err) {
+      console.error('Phone lookup failed (continuing without it):', err.message);
+    }
+
+    const searchResult = await runSearchFallback(
+      `"${subjectValue}"`,
+      'Search results show where this exact number is publicly indexed (e.g. scam reports, forum complaints, business listings) — this is not proof the number itself is compromised or fraudulent, only where it appears.'
+    );
+
+    return {
+      method: 'phone_lookup',
+      note: searchResult.note,
+      findings: [...findings, ...searchResult.findings],
+    };
   }
 
   // --- Social profile ---
@@ -42,11 +64,9 @@ export async function verifySubject({ subjectType, subjectValue, subjectPlatform
           findings: [{ source: fetched.url, title: fetched.title, content: `${fetched.description}\n${fetched.textSnippet}`.trim() }],
         };
       }
-      // Fetch blocked or failed — fall back to search rather than giving up entirely.
       return runSearchFallback(`${subjectPlatform} ${subjectValue}`, fetched.reason || fetched.error);
     }
 
-    // Not a direct URL (e.g. just a handle) — search instead.
     return runSearchFallback(`${subjectPlatform} ${subjectValue}`, null);
   }
 
