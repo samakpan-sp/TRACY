@@ -2,27 +2,40 @@ import { useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import EvidenceInput from './EvidenceInput';
 import SubjectClaimsInput from './SubjectClaimsInput';
+import { LinkIcon, PhoneIcon, AdIcon, ProfileIcon, InfoIcon, GearIcon } from './icons';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const SUBJECT_TYPES = [
-  { value: 'url', label: 'Website / URL' },
-  { value: 'business_advert', label: 'Business advert' },
-  { value: 'social_profile', label: 'Social media handle' },
-  { value: 'phone_number', label: 'Phone number' },
+  { value: 'url', label: 'Website / URL', subtitle: 'Domain & link check', icon: LinkIcon },
+  { value: 'phone_number', label: 'Phone Number', subtitle: 'Carrier & line verification', icon: PhoneIcon },
+  { value: 'business_advert', label: 'Business Advert', subtitle: 'Offer & claims review', icon: AdIcon },
+  { value: 'social_profile', label: 'Social Profile', subtitle: 'Account analysis', icon: ProfileIcon },
 ];
 
-const SOCIAL_PLATFORMS = [
-  { value: 'instagram', label: 'Instagram' },
-  { value: 'facebook', label: 'Facebook' },
-  { value: 'tiktok', label: 'TikTok' },
-  { value: 'x', label: 'X (Twitter)' },
-  { value: 'linkedin', label: 'LinkedIn' },
-  { value: 'whatsapp', label: 'WhatsApp' },
-  { value: 'telegram', label: 'Telegram' },
-  { value: 'youtube', label: 'YouTube' },
-  { value: 'other', label: 'Other' },
+const SOCIAL_PLATFORMS = ['instagram', 'facebook', 'tiktok', 'x', 'linkedin', 'whatsapp', 'telegram', 'youtube', 'other'];
+
+const LEGEND = [
+  { color: 'bg-trust', title: 'Verified Facts', desc: 'Confirmed from public sources' },
+  { color: 'bg-risk', title: 'User-Provided Claims', desc: 'What you told TRACY' },
+  { color: 'bg-connection', title: 'Possible Connections', desc: 'Labeled as inference' },
+  { color: 'bg-danger', title: 'Risk Indicators', desc: 'Patterns, not proof' },
 ];
+
+function Panel({ title, hint, children, icon }) {
+  return (
+    <div className="bg-surface border border-border rounded-xl p-5 mb-5">
+      {title && (
+        <div className="flex items-start gap-2 mb-1">
+          {icon}
+          <h3 className="font-display text-[15px] font-semibold m-0">{title}</h3>
+        </div>
+      )}
+      {hint && <p className="text-xs text-gray-500 mb-4">{hint}</p>}
+      {children}
+    </div>
+  );
+}
 
 function InvestigationForm({ onReportReceived }) {
   const [subjectType, setSubjectType] = useState('url');
@@ -51,7 +64,6 @@ function InvestigationForm({ onReportReceived }) {
     }
 
     setLoading(true);
-
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
       setError('You must be logged in.');
@@ -62,10 +74,7 @@ function InvestigationForm({ onReportReceived }) {
     try {
       const res = await fetch(`${API_BASE}/api/investigations`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({
           subject_type: subjectType,
           subject_value: subjectValue,
@@ -75,14 +84,11 @@ function InvestigationForm({ onReportReceived }) {
           subject_claims: subjectClaims,
         }),
       });
-
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
         throw new Error(errBody.error || `Server responded ${res.status}`);
       }
-
-      const report = await res.json();
-      onReportReceived(report);
+      onReportReceived(await res.json());
     } catch (err) {
       setError(err.message);
     } finally {
@@ -91,84 +97,121 @@ function InvestigationForm({ onReportReceived }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} style={{ maxWidth: '500px' }}>
-      <h2>New Investigation</h2>
+    <form onSubmit={handleSubmit}>
+      <div className="grid grid-cols-1 lg:grid-cols-[2.1fr_1fr] gap-6 items-start">
+        <div>
+          <Panel title="What are you investigating?" hint="Select the type of artifact you want TRACY to analyze">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {SUBJECT_TYPES.map((t) => {
+                const Icon = t.icon;
+                const active = subjectType === t.value;
+                return (
+                  <button
+                    key={t.value}
+                    type="button"
+                    onClick={() => { setSubjectType(t.value); setSubjectValue(''); setSubjectPlatform(null); }}
+                    className={`flex flex-col items-start gap-2 p-4 rounded-lg border text-left transition
+                      ${active ? 'border-trust bg-trust/10' : 'border-border bg-bg hover:border-gray-600'}`}
+                  >
+                    <Icon className={active ? 'text-trust' : 'text-gray-500'} />
+                    <span className="text-sm font-semibold">{t.label}</span>
+                    <span className="text-xs text-gray-500 leading-snug">{t.subtitle}</span>
+                  </button>
+                );
+              })}
+            </div>
 
-      <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>
-        What are you investigating?
-      </label>
-      <select
-        value={subjectType}
-        onChange={(e) => {
-          setSubjectType(e.target.value);
-          setSubjectValue('');
-          setSubjectPlatform(null);
-        }}
-        style={{ display: 'block', width: '100%', marginBottom: '0.5rem' }}
-      >
-        {SUBJECT_TYPES.map((t) => (
-          <option key={t.value} value={t.value}>{t.label}</option>
-        ))}
-      </select>
+            {subjectType === 'social_profile' && (
+              <div className="mt-4">
+                <label className="block text-sm font-semibold mb-2">Which platform?</label>
+                <div className="flex flex-wrap gap-2">
+                  {SOCIAL_PLATFORMS.map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setSubjectPlatform(p)}
+                      className={`px-3.5 py-1.5 rounded-full text-sm border transition capitalize
+                        ${subjectPlatform === p ? 'bg-trust border-trust text-[#06231F] font-medium' : 'border-border text-gray-400 bg-bg'}`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Panel>
 
-      {subjectType === 'social_profile' && (
-        <div style={{ marginBottom: '1rem' }}>
-          <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>
-            Which platform?
-          </label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-            {SOCIAL_PLATFORMS.map((p) => (
-              <button
-                key={p.value}
-                type="button"
-                onClick={() => setSubjectPlatform(p.value)}
-                style={{
-                  padding: '0.4rem 0.8rem',
-                  border: subjectPlatform === p.value ? '2px solid #333' : '1px solid #ccc',
-                  background: subjectPlatform === p.value ? '#eee' : '#fff',
-                  borderRadius: '20px',
-                  cursor: 'pointer',
-                }}
-              >
-                {p.label}
-              </button>
-            ))}
+          <Panel>
+            <label className="block text-sm font-semibold mb-1.5">Subject</label>
+            <input
+              className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm mb-5
+                         placeholder-gray-600 focus:outline-none focus:border-trust transition"
+              type="text"
+              value={subjectValue}
+              onChange={(e) => setSubjectValue(e.target.value)}
+              required
+              placeholder={subjectPlaceholder}
+            />
+            <EvidenceInput evidence={evidence} setEvidence={setEvidence} />
+          </Panel>
+
+          <div className="bg-surface border border-border rounded-xl p-4 mb-5">
+            <p className="text-[11px] font-semibold tracking-wider text-gray-500 mb-2">ANALYSIS TIPS</p>
+            <ul className="text-sm text-gray-400 space-y-1.5 list-disc list-inside">
+              <li>Include the full message — partial text reduces evidence quality</li>
+              <li>Keep any URLs intact — TRACY will check them where possible</li>
+              <li>Add sender details (phone, email, username) as separate evidence if visible</li>
+            </ul>
           </div>
+
+          {error && <p className="text-sm text-danger mb-3">{error}</p>}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2 bg-trust text-[#06231F] font-medium
+                       py-3.5 rounded-lg hover:brightness-110 transition disabled:opacity-60"
+          >
+            <GearIcon />
+            {loading ? 'Analyzing...' : 'Begin Investigation'}
+          </button>
         </div>
-      )}
 
-      <input
-        type="text"
-        value={subjectValue}
-        onChange={(e) => setSubjectValue(e.target.value)}
-        required
-        placeholder={subjectPlaceholder}
-        style={{ display: 'block', width: '100%', marginBottom: '1rem' }}
-      />
+        <aside>
+          <Panel
+            title="Your Context"
+            icon={<InfoIcon className="text-gray-500 mt-0.5" />}
+            hint="What do you know about this? Your context helps TRACY identify contradictions."
+          >
+            <textarea
+              className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm
+                         placeholder-gray-600 focus:outline-none focus:border-trust transition resize-y"
+              value={userContext}
+              onChange={(e) => setUserContext(e.target.value)}
+              rows={4}
+              placeholder="e.g. I received this from a number claiming to be my bank..."
+            />
+          </Panel>
 
-      <EvidenceInput evidence={evidence} setEvidence={setEvidence} />
+          <Panel>
+            <SubjectClaimsInput claims={subjectClaims} setClaims={setSubjectClaims} />
+          </Panel>
 
-      <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>
-        What do you know about this?
-      </label>
-      <p style={{ fontSize: '0.85rem', color: '#555', marginTop: 0 }}>
-        Your context helps TRACY identify contradictions.
-      </p>
-      <textarea
-        value={userContext}
-        onChange={(e) => setUserContext(e.target.value)}
-        rows={3}
-        placeholder="Any background you already have on this situation"
-        style={{ display: 'block', width: '100%', marginBottom: '1rem' }}
-      />
-
-      <SubjectClaimsInput claims={subjectClaims} setClaims={setSubjectClaims} />
-
-      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
-
-      <button type="submit" disabled={loading}>
-        {loading ? 'Analyzing...' : 'Run Investigation'}
-      </button>
+          <Panel title="Report will include">
+            <ul className="space-y-3">
+              {LEGEND.map((item) => (
+                <li key={item.title} className="flex items-start gap-2.5">
+                  <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${item.color}`} />
+                  <div>
+                    <div className="text-sm font-medium">{item.title}</div>
+                    <div className="text-xs text-gray-500">{item.desc}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        </aside>
+      </div>
     </form>
   );
 }

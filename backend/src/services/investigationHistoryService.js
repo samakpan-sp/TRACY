@@ -1,8 +1,6 @@
 import { supabaseAdmin } from '../lib/supabaseClient.js';
 
-// Normalizes a subject into a stable key so the same real-world subject
-// matches across differently-formatted submissions (e.g. "08163635011"
-// vs "+2348163635011", or a URL with/without a trailing slash).
+
 function normalizeSubjectKey(subjectType, subjectValue, subjectPlatform) {
   if (subjectType === 'phone_number') {
     // Last 10 digits — a pragmatic way to match local vs. international

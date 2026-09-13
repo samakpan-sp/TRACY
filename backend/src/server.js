@@ -9,7 +9,7 @@ import evidenceUploadRouter from './routes/evidenceUpload.js';
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 
 app.use(cors({ origin: FRONTEND_ORIGIN }));

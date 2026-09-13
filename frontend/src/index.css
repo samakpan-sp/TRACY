@@ -1,0 +1,190 @@
+@import '@fontsource/space-grotesk/500.css';
+@import '@fontsource/space-grotesk/700.css';
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+
+:root {
+  --color-bg: #0E1116;
+  --color-surface: #171B22;
+  --color-surface-2: #1D222B;
+  --color-border: #262B34;
+  --color-text: #E7E9EC;
+  --color-text-muted: #9AA1AB;
+  --color-trust: #2DD4BF;
+  --color-risk: #F5A623;
+  --color-connection: #8B5CF6;
+  --color-danger: #F87171;
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-body: 'IBM Plex Sans', sans-serif;
+  --radius: 10px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  font-family: var(--font-body);
+}
+
+button {
+  font-family: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-trust);
+  outline-offset: 2px;
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ---------- Landing ---------- */
+
+.landing {
+  background: var(--color-bg);
+  color: var(--color-text);
+  min-height: 100vh;
+}
+
+.landing__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 100vh;
+}
+
+.landing__left {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 4rem;
+}
+
+.landing__right {
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 60% 40%, #12161d 0%, var(--color-bg) 70%);
+}
+
+.landing__scene {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.85;
+}
+
+.landing__capabilities {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 3rem;
+  gap: 0.75rem;
+}
+
+.landing__capabilities-label {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin: 0 0 0.5rem;
+}
+
+.capability-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1.1rem;
+  background: rgba(23, 27, 34, 0.7);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  animation: fadeSlideUp 0.6s ease forwards;
+  max-width: 320px;
+}
+
+.capability-item svg {
+  flex-shrink: 0;
+  color: var(--color-trust);
+}
+
+.capability-item span {
+  font-size: 0.95rem;
+  color: var(--color-text);
+}
+
+.landing__wordmark {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 2rem;
+  letter-spacing: 0.01em;
+  display: block;
+  margin-bottom: 1.5rem;
+}
+
+.landing__tagline {
+  font-size: 1.2rem;
+  line-height: 1.65;
+  color: #C7CCD3;
+  margin-bottom: 2.25rem;
+  max-width: 40ch;
+}
+
+.landing__cta {
+  align-self: flex-start;
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 1rem;
+  padding: 0.9rem 1.85rem;
+  background: var(--color-trust);
+  color: #06231F;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.landing__cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(45, 212, 191, 0.25);
+}
+
+.landing__auth {
+  background: rgba(23, 27, 34, 0.9);
+  padding: 1.75rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  max-width: 420px;
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .landing__grid {
+    grid-template-columns: 1fr;
+  }
+  .landing__right {
+    min-height: 60vh;
+  }
+  .landing__left {
+    padding: 2.5rem 1.75rem;
+  }
+  .landing__capabilities {
+    padding: 2rem 1.75rem;
+  }
+}

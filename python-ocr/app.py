@@ -10,7 +10,7 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)  # internal service — only our own backend calls this, not the public internet
 
-PORT = int(os.environ.get('PORT', 5001))
+PORT = int(os.environ.get('PORT', 5000))
 
 @app.route('/health', methods=['GET'])
 def health():
